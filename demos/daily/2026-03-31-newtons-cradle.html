@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pêndulo de Newton - p2.js Demo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #canvas {
+            display: block;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.3);
+        }
+
+        .overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            max-width: 400px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 28px;
+            color: #FFD700;
+        }
+
+        p {
+            margin: 5px 0;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .instructions {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            font-size: 13px;
+        }
+
+        .credit {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay">
+        <h1>Pêndulo de Newton</h1>
+        <p>
+            Demonstração clássica da conservação de momentum e energia.
+            Quando uma esfera colide com o grupo em repouso, a energia é transferida
+            através das esferas até a última, que é lançada com a mesma velocidade.
+        </p>
+        <div class="instructions">
+            <strong>Interação:</strong><br>
+            • Clique e arraste qualquer esfera para soltá-la<br>
+            • Experimente soltar múltiplas esferas ao mesmo tempo<br>
+            • Observe a conservação perfeita de momentum
+        </div>
+    </div>
+
+    <div class="credit">p2.js Physics Engine</div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Physics world
+        const world = new p2.World({
+            gravity: [0, 20] // Gravity pointing down
+        });
+
+        // Materials and contact material for perfect elastic collision
+        const ballMaterial = new p2.Material();
+        const contactMaterial = new p2.ContactMaterial(ballMaterial, ballMaterial, {
+            restitution: 1.0,  // Perfect bounce (no energy loss)
+            stiffness: Number.MAX_VALUE,
+            relaxation: 3,
+            frictionStiffness: Number.MAX_VALUE,
+            frictionRelaxation: 3,
+            friction: 0.0
+        });
+        world.addContactMaterial(contactMaterial);
+
+        // Constants for Newton's Cradle
+        const numBalls = 5;
+        const ballRadius = 0.5;
+        const stringLength = 4;
+        const spacing = ballRadius * 2.02; // Slight spacing for visual clarity
+        const pivotY = 2;
+        const centerX = 0;
+
+        // Arrays to hold balls and constraints
+        const balls = [];
+        const constraints = [];
+
+        // Create the cradle
+        for (let i = 0; i < numBalls; i++) {
+            const xOffset = (i - (numBalls - 1) / 2) * spacing;
+
+            // Create ball body
+            const ballBody = new p2.Body({
+                mass: 1,
+                position: [centerX + xOffset, pivotY + stringLength],
+                damping: 0.0,
+                angularDamping: 0.0
+            });
+
+            // Add circle shape to the ball
+            const ballShape = new p2.Circle({ radius: ballRadius });
+            ballShape.material = ballMaterial;
+            ballBody.addShape(ballShape);
+            world.addBody(ballBody);
+            balls.push(ballBody);
+
+            // Create static anchor point
+            const anchor = new p2.Body({
+                mass: 0, // Static body
+                position: [centerX + xOffset, pivotY]
+            });
+            world.addBody(anchor);
+
+            // Create revolute constraint (string)
+            const constraint = new p2.RevoluteConstraint(anchor, ballBody, {
+                localPivotA: [0, 0],
+                localPivotB: [0, -stringLength],
+                maxForce: 1000
+            });
+            world.addConstraint(constraint);
+            constraints.push({ anchor, constraint });
+        }
+
+        // Mouse/touch interaction
+        let mouseBody = null;
+        let mouseConstraint = null;
+        let draggedBall = null;
+
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            return {
+                x: (clientX - rect.left - canvas.width / 2) / 50,
+                y: (clientY - rect.top - canvas.height / 2) / 50
+            };
+        }
+
+        function handleStart(e) {
+            e.preventDefault();
+            const mousePos = getMousePos(e);
+
+            // Check if clicking on any ball
+            for (let i = 0; i < balls.length; i++) {
+                const ball = balls[i];
+                const dx = ball.position[0] - mousePos.x;
+                const dy = ball.position[1] - mousePos.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < ballRadius) {
+                    draggedBall = ball;
+
+                    // Create mouse body
+                    if (!mouseBody) {
+                        mouseBody = new p2.Body({
+                            mass: 0,
+                            position: [mousePos.x, mousePos.y]
+                        });
+                        world.addBody(mouseBody);
+                    } else {
+                        mouseBody.position[0] = mousePos.x;
+                        mouseBody.position[1] = mousePos.y;
+                    }
+
+                    // Create constraint between mouse and ball
+                    mouseConstraint = new p2.RevoluteConstraint(mouseBody, ball, {
+                        localPivotA: [0, 0],
+                        localPivotB: [0, 0],
+                        maxForce: 1000
+                    });
+                    world.addConstraint(mouseConstraint);
+                    break;
+                }
+            }
+        }
+
+        function handleMove(e) {
+            e.preventDefault();
+            if (mouseBody && mouseConstraint) {
+                const mousePos = getMousePos(e);
+                mouseBody.position[0] = mousePos.x;
+                mouseBody.position[1] = mousePos.y;
+            }
+        }
+
+        function handleEnd(e) {
+            e.preventDefault();
+            if (mouseConstraint) {
+                world.removeConstraint(mouseConstraint);
+                mouseConstraint = null;
+                draggedBall = null;
+            }
+        }
+
+        // Rendering
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.scale(50, 50); // Scale for better visualization
+
+            // Draw strings
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 0.02;
+            ctx.lineCap = 'round';
+
+            for (let i = 0; i < balls.length; i++) {
+                const ball = balls[i];
+                const anchor = constraints[i].anchor;
+
+                ctx.beginPath();
+                ctx.moveTo(anchor.position[0], anchor.position[1]);
+                ctx.lineTo(ball.position[0], ball.position[1]);
+                ctx.stroke();
+            }
+
+            // Draw balls with gradient
+            for (let i = 0; i < balls.length; i++) {
+                const ball = balls[i];
+                const x = ball.position[0];
+                const y = ball.position[1];
+
+                // Ball shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.beginPath();
+                ctx.arc(x + 0.05, y + 0.05, ballRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Create gradient for 3D effect
+                const gradient = ctx.createRadialGradient(
+                    x - ballRadius * 0.3,
+                    y - ballRadius * 0.3,
+                    0,
+                    x,
+                    y,
+                    ballRadius
+                );
+
+                // Different colors for each ball
+                const hue = (i / numBalls) * 60 + 180; // Blue to cyan range
+                gradient.addColorStop(0, `hsl(${hue}, 70%, 70%)`);
+                gradient.addColorStop(0.7, `hsl(${hue}, 80%, 50%)`);
+                gradient.addColorStop(1, `hsl(${hue}, 90%, 30%)`);
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Highlight
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.beginPath();
+                ctx.arc(x - ballRadius * 0.3, y - ballRadius * 0.3, ballRadius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Outline
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 0.03;
+                ctx.beginPath();
+                ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            // Draw anchor points
+            ctx.fillStyle = 'rgba(255, 215, 0, 0.8)';
+            for (let i = 0; i < constraints.length; i++) {
+                const anchor = constraints[i].anchor;
+                ctx.beginPath();
+                ctx.arc(anchor.position[0], anchor.position[1], 0.1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+
+        // Animation loop
+        let lastTime = performance.now();
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // Step the physics world
+            world.step(1 / 60, deltaTime, 10);
+
+            // Render
+            render();
+        }
+
+        // Start animation
+        animate(performance.now());
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Initialize: Pull first ball to start the demonstration
+        setTimeout(() => {
+            balls[0].position[0] -= 2;
+            balls[0].velocity[0] = 0;
+            balls[0].velocity[1] = 0;
+        }, 500);
+    </script>
+</body>
+</html>
