@@ -86,7 +86,17 @@ Broadphase.boundingRadiusCheck = function(bodyA, bodyB){
  * @return {Boolean}
  */
 Broadphase.aabbCheck = function(bodyA, bodyB){
-    return bodyA.getAABB().overlaps(bodyB.getAABB());
+    var aabbA = bodyA.getAABB();
+    var aabbB = bodyB.getAABB();
+
+    if (!aabbA) {
+        throw new Error('Body A does not have a valid AABB. Ensure the body has at least one shape.');
+    }
+    if (!aabbB) {
+        throw new Error('Body B does not have a valid AABB. Ensure the body has at least one shape.');
+    }
+
+    return aabbA.overlaps(aabbB);
 };
 
 /**
