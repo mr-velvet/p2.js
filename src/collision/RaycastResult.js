@@ -76,7 +76,7 @@ RaycastResult.prototype.getHitDistance = function (ray) {
 /**
  * Returns true if the ray hit something since the last reset().
  * @method hasHit
- * @®eturn {boolean}
+ * @return {boolean}
  */
 RaycastResult.prototype.hasHit = function () {
 	return this.fraction !== -1;
