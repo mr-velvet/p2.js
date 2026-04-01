@@ -153,9 +153,10 @@ AABB.prototype.overlaps = function(aabb){
 };
 
 /**
+ * Returns true if the given point is inside this AABB.
  * @method containsPoint
- * @param  {Array} point
- * @return {boolean}
+ * @param  {Array} point A 2D point array [x, y]
+ * @return {boolean} True if the point is inside the AABB, false otherwise
  */
 AABB.prototype.containsPoint = function(point){
     var l = this.lowerBound,
