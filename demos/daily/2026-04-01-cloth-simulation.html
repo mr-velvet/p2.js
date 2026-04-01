@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulação de Tecido - p2.js Demo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #canvas {
+            display: block;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.3);
+        }
+
+        .overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            max-width: 420px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 28px;
+            color: #FFD700;
+        }
+
+        p {
+            margin: 5px 0;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .instructions {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            font-size: 13px;
+        }
+
+        .credit {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+        }
+
+        .controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            backdrop-filter: blur(10px);
+        }
+
+        button {
+            background: rgba(255, 215, 0, 0.9);
+            border: none;
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 5px 0;
+            width: 100%;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: rgba(255, 215, 0, 1);
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="overlay">
+        <h1>Simulação de Tecido</h1>
+        <p>
+            Uma rede de partículas conectadas por molas que simula o comportamento
+            de um tecido flexível. As conexões podem se romper sob pressão excessiva,
+            criando rasgos realistas no material.
+        </p>
+        <div class="instructions">
+            <strong>Interação:</strong><br>
+            • Clique e arraste para puxar o tecido<br>
+            • Arraste com força para rasgar as conexões<br>
+            • Use os botões para resetar ou adicionar objetos<br>
+            • Veja como o tecido reage à gravidade e forças
+        </div>
+    </div>
+
+    <div class="controls">
+        <button id="resetBtn">🔄 Resetar Tecido</button>
+        <button id="addBallBtn">⚽ Adicionar Bola</button>
+        <button id="addBoxBtn">📦 Adicionar Caixa</button>
+    </div>
+
+    <div class="credit">p2.js Physics Engine</div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Physics world
+        const world = new p2.World({
+            gravity: [0, 15]
+        });
+
+        // Materials
+        const clothMaterial = new p2.Material();
+        const objectMaterial = new p2.Material();
+
+        const clothClothContact = new p2.ContactMaterial(clothMaterial, clothMaterial, {
+            friction: 0.1,
+            restitution: 0.0
+        });
+
+        const clothObjectContact = new p2.ContactMaterial(clothMaterial, objectMaterial, {
+            friction: 0.3,
+            restitution: 0.2
+        });
+
+        world.addContactMaterial(clothClothContact);
+        world.addContactMaterial(clothObjectContact);
+
+        // Cloth parameters
+        const clothWidth = 20;
+        const clothHeight = 15;
+        const spacing = 0.5;
+        const particleMass = 0.1;
+        const stiffness = 80;
+        const damping = 0.3;
+        const tearThreshold = 150; // Force threshold to break constraints
+
+        // Arrays to hold cloth elements
+        let particles = [];
+        let constraints = [];
+        let objects = [];
+
+        // Create cloth mesh
+        function createCloth() {
+            particles = [];
+            constraints = [];
+
+            const startX = -clothWidth * spacing / 2;
+            const startY = -5;
+
+            // Create particle grid
+            for (let y = 0; y < clothHeight; y++) {
+                particles[y] = [];
+                for (let x = 0; x < clothWidth; x++) {
+                    const body = new p2.Body({
+                        mass: (y === 0) ? 0 : particleMass, // Top row is fixed
+                        position: [startX + x * spacing, startY + y * spacing],
+                        damping: 0.01
+                    });
+
+                    const shape = new p2.Circle({ radius: 0.1 });
+                    shape.material = clothMaterial;
+                    body.addShape(shape);
+                    world.addBody(body);
+                    particles[y][x] = body;
+                }
+            }
+
+            // Create constraints between particles
+            for (let y = 0; y < clothHeight; y++) {
+                for (let x = 0; x < clothWidth; x++) {
+                    const particle = particles[y][x];
+
+                    // Connect to right neighbor
+                    if (x < clothWidth - 1) {
+                        const neighbor = particles[y][x + 1];
+                        const constraint = new p2.DistanceConstraint(particle, neighbor, {
+                            distance: spacing,
+                            stiffness: stiffness,
+                            damping: damping
+                        });
+                        world.addConstraint(constraint);
+                        constraints.push(constraint);
+                    }
+
+                    // Connect to bottom neighbor
+                    if (y < clothHeight - 1) {
+                        const neighbor = particles[y + 1][x];
+                        const constraint = new p2.DistanceConstraint(particle, neighbor, {
+                            distance: spacing,
+                            stiffness: stiffness,
+                            damping: damping
+                        });
+                        world.addConstraint(constraint);
+                        constraints.push(constraint);
+                    }
+
+                    // Diagonal constraints for shear resistance
+                    if (x < clothWidth - 1 && y < clothHeight - 1) {
+                        const neighbor1 = particles[y + 1][x + 1];
+                        const constraint1 = new p2.DistanceConstraint(particle, neighbor1, {
+                            distance: spacing * Math.sqrt(2),
+                            stiffness: stiffness * 0.5,
+                            damping: damping
+                        });
+                        world.addConstraint(constraint1);
+                        constraints.push(constraint1);
+
+                        const neighbor2 = particles[y + 1][x - 1];
+                        if (x > 0) {
+                            const constraint2 = new p2.DistanceConstraint(particle, neighbor2, {
+                                distance: spacing * Math.sqrt(2),
+                                stiffness: stiffness * 0.5,
+                                damping: damping
+                            });
+                            world.addConstraint(constraint2);
+                            constraints.push(constraint2);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add interactive object
+        function addBall() {
+            const body = new p2.Body({
+                mass: 2,
+                position: [Math.random() * 4 - 2, -8],
+                velocity: [Math.random() * 2 - 1, 0]
+            });
+
+            const shape = new p2.Circle({ radius: 0.6 });
+            shape.material = objectMaterial;
+            body.addShape(shape);
+            world.addBody(body);
+            objects.push(body);
+        }
+
+        function addBox() {
+            const body = new p2.Body({
+                mass: 3,
+                position: [Math.random() * 4 - 2, -8],
+                velocity: [Math.random() * 2 - 1, 0],
+                angularVelocity: Math.random() * 2 - 1
+            });
+
+            const shape = new p2.Box({ width: 1, height: 1 });
+            shape.material = objectMaterial;
+            body.addShape(shape);
+            world.addBody(body);
+            objects.push(body);
+        }
+
+        function reset() {
+            // Remove all existing bodies and constraints
+            for (let y = 0; y < particles.length; y++) {
+                for (let x = 0; x < particles[y].length; x++) {
+                    world.removeBody(particles[y][x]);
+                }
+            }
+
+            constraints.forEach(c => world.removeConstraint(c));
+            objects.forEach(o => world.removeBody(o));
+
+            objects = [];
+            createCloth();
+        }
+
+        // Mouse interaction
+        let mouseBody = null;
+        let mouseConstraint = null;
+        let draggedParticle = null;
+
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            return {
+                x: (clientX - rect.left - canvas.width / 2) / 40,
+                y: (clientY - rect.top - canvas.height / 2) / 40
+            };
+        }
+
+        function handleStart(e) {
+            e.preventDefault();
+            const mousePos = getMousePos(e);
+
+            // Check if clicking on any particle
+            for (let y = 0; y < particles.length; y++) {
+                for (let x = 0; x < particles[y].length; x++) {
+                    const particle = particles[y][x];
+                    if (particle.mass === 0) continue; // Skip fixed particles
+
+                    const dx = particle.position[0] - mousePos.x;
+                    const dy = particle.position[1] - mousePos.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < 0.5) {
+                        draggedParticle = particle;
+
+                        if (!mouseBody) {
+                            mouseBody = new p2.Body({
+                                mass: 0,
+                                position: [mousePos.x, mousePos.y]
+                            });
+                            world.addBody(mouseBody);
+                        } else {
+                            mouseBody.position[0] = mousePos.x;
+                            mouseBody.position[1] = mousePos.y;
+                        }
+
+                        mouseConstraint = new p2.DistanceConstraint(mouseBody, particle, {
+                            distance: 0,
+                            stiffness: 200,
+                            damping: 5
+                        });
+                        world.addConstraint(mouseConstraint);
+                        return;
+                    }
+                }
+            }
+        }
+
+        function handleMove(e) {
+            e.preventDefault();
+            if (mouseBody && mouseConstraint) {
+                const mousePos = getMousePos(e);
+                mouseBody.position[0] = mousePos.x;
+                mouseBody.position[1] = mousePos.y;
+            }
+        }
+
+        function handleEnd(e) {
+            e.preventDefault();
+            if (mouseConstraint) {
+                world.removeConstraint(mouseConstraint);
+                mouseConstraint = null;
+                draggedParticle = null;
+            }
+        }
+
+        // Check for torn constraints based on force
+        function checkTearing() {
+            for (let i = constraints.length - 1; i >= 0; i--) {
+                const constraint = constraints[i];
+                if (!constraint.bodyA || !constraint.bodyB) continue;
+
+                const dx = constraint.bodyA.position[0] - constraint.bodyB.position[0];
+                const dy = constraint.bodyA.position[1] - constraint.bodyB.position[1];
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                // If stretched too far, tear the constraint
+                if (distance > constraint.distance * 2.5) {
+                    world.removeConstraint(constraint);
+                    constraints.splice(i, 1);
+                }
+            }
+        }
+
+        // Rendering
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.scale(40, 40);
+
+            // Draw constraints (cloth mesh)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 0.02;
+            ctx.lineCap = 'round';
+
+            for (let i = 0; i < constraints.length; i++) {
+                const constraint = constraints[i];
+                if (!constraint.bodyA || !constraint.bodyB) continue;
+
+                const a = constraint.bodyA.position;
+                const b = constraint.bodyB.position;
+
+                ctx.beginPath();
+                ctx.moveTo(a[0], a[1]);
+                ctx.lineTo(b[0], b[1]);
+                ctx.stroke();
+            }
+
+            // Draw cloth surface with triangles
+            ctx.fillStyle = 'rgba(138, 43, 226, 0.6)';
+            for (let y = 0; y < clothHeight - 1; y++) {
+                for (let x = 0; x < clothWidth - 1; x++) {
+                    const p1 = particles[y][x];
+                    const p2 = particles[y][x + 1];
+                    const p3 = particles[y + 1][x];
+                    const p4 = particles[y + 1][x + 1];
+
+                    // Triangle 1
+                    ctx.beginPath();
+                    ctx.moveTo(p1.position[0], p1.position[1]);
+                    ctx.lineTo(p2.position[0], p2.position[1]);
+                    ctx.lineTo(p3.position[0], p3.position[1]);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Triangle 2
+                    ctx.beginPath();
+                    ctx.moveTo(p2.position[0], p2.position[1]);
+                    ctx.lineTo(p4.position[0], p4.position[1]);
+                    ctx.lineTo(p3.position[0], p3.position[1]);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
+            // Draw particles
+            for (let y = 0; y < particles.length; y++) {
+                for (let x = 0; x < particles[y].length; x++) {
+                    const particle = particles[y][x];
+                    const px = particle.position[0];
+                    const py = particle.position[1];
+
+                    if (particle.mass === 0) {
+                        // Fixed particles (gold)
+                        ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
+                        ctx.beginPath();
+                        ctx.arc(px, py, 0.15, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        // Regular particles
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        ctx.beginPath();
+                        ctx.arc(px, py, 0.08, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Draw objects (balls and boxes)
+            for (let i = 0; i < objects.length; i++) {
+                const obj = objects[i];
+                const shape = obj.shapes[0];
+
+                ctx.save();
+                ctx.translate(obj.position[0], obj.position[1]);
+                ctx.rotate(obj.angle);
+
+                if (shape instanceof p2.Circle) {
+                    // Draw ball with gradient
+                    const gradient = ctx.createRadialGradient(-0.2, -0.2, 0, 0, 0, shape.radius);
+                    gradient.addColorStop(0, 'rgba(255, 100, 100, 1)');
+                    gradient.addColorStop(1, 'rgba(200, 0, 0, 1)');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, shape.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Outline
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                    ctx.lineWidth = 0.04;
+                    ctx.stroke();
+                } else if (shape instanceof p2.Box) {
+                    // Draw box
+                    ctx.fillStyle = 'rgba(100, 200, 255, 0.9)';
+                    ctx.fillRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height);
+
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                    ctx.lineWidth = 0.04;
+                    ctx.strokeRect(-shape.width / 2, -shape.height / 2, shape.width, shape.height);
+                }
+
+                ctx.restore();
+            }
+
+            ctx.restore();
+        }
+
+        // Animation loop
+        let lastTime = performance.now();
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // Step physics
+            world.step(1 / 60, deltaTime, 10);
+
+            // Check for torn constraints
+            checkTearing();
+
+            // Render
+            render();
+        }
+
+        // Button event listeners
+        document.getElementById('resetBtn').addEventListener('click', reset);
+        document.getElementById('addBallBtn').addEventListener('click', addBall);
+        document.getElementById('addBoxBtn').addEventListener('click', addBox);
+
+        // Initialize
+        createCloth();
+
+        // Start animation
+        animate(performance.now());
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Add initial objects for demonstration
+        setTimeout(() => {
+            addBall();
+        }, 1000);
+    </script>
+</body>
+</html>
