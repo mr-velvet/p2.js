@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domino Chain Reaction - p2.js Demo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        canvas {
+            display: block;
+            background: #1a1a2e;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 350px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            color: #ffd700;
+        }
+
+        p {
+            margin: 5px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .controls {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            font-size: 13px;
+        }
+
+        .highlight {
+            color: #ffd700;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="info">
+        <h1>🎲 Reação em Cadeia de Dominós</h1>
+        <p>Veja a física de colisões em ação com dominós que caem em sequência!</p>
+        <div class="controls">
+            <p><span class="highlight">Clique</span> para criar um dominó</p>
+            <p><span class="highlight">Barra de Espaço</span> para empurrar o primeiro</p>
+            <p><span class="highlight">R</span> para reiniciar</p>
+            <p><span class="highlight">C</span> para criar linha completa</p>
+        </div>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Physics world
+        const world = new p2.World({
+            gravity: [0, 20]
+        });
+
+        // Domino properties
+        const DOMINO_WIDTH = 0.3;
+        const DOMINO_HEIGHT = 1.5;
+        const DOMINO_SPACING = 0.8;
+
+        // Colors for dominoes (alternating for visual effect)
+        const DOMINO_COLORS = [
+            '#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24',
+            '#6c5ce7', '#fd79a8', '#00b894', '#fdcb6e'
+        ];
+
+        // Domino array to track them
+        let dominoes = [];
+        let colorIndex = 0;
+
+        // Create ground
+        const groundBody = new p2.Body({
+            mass: 0,
+            position: [0, canvas.height / 50 - 1]
+        });
+        const groundShape = new p2.Plane();
+        groundBody.addShape(groundShape);
+        world.addBody(groundBody);
+
+        // Helper function to convert world coordinates to pixels
+        function worldToPixels(worldCoord) {
+            return [
+                worldCoord[0] * 50 + canvas.width / 2,
+                canvas.height - (worldCoord[1] * 50)
+            ];
+        }
+
+        // Helper function to convert pixels to world coordinates
+        function pixelsToWorld(pixelCoord) {
+            return [
+                (pixelCoord[0] - canvas.width / 2) / 50,
+                (canvas.height - pixelCoord[1]) / 50
+            ];
+        }
+
+        // Create a domino at a specific position
+        function createDomino(x, y, applyColor = null) {
+            const dominoBody = new p2.Body({
+                mass: 1,
+                position: [x, y],
+                angularDamping: 0.1
+            });
+
+            const dominoShape = new p2.Box({
+                width: DOMINO_WIDTH,
+                height: DOMINO_HEIGHT
+            });
+
+            dominoBody.addShape(dominoShape);
+            world.addBody(dominoBody);
+
+            // Store color info with the body
+            dominoBody.displayColor = applyColor || DOMINO_COLORS[colorIndex % DOMINO_COLORS.length];
+            dominoes.push(dominoBody);
+
+            if (applyColor === null) {
+                colorIndex++;
+            }
+
+            return dominoBody;
+        }
+
+        // Create a line of dominoes
+        function createDominoLine(startX, y, count) {
+            for (let i = 0; i < count; i++) {
+                createDomino(startX + i * DOMINO_SPACING, y);
+            }
+        }
+
+        // Push the first domino
+        function pushFirstDomino() {
+            if (dominoes.length > 0) {
+                const first = dominoes[0];
+                first.angularVelocity = 3;
+                first.applyForce([50, 0], [0, -0.5]);
+            }
+        }
+
+        // Clear all dominoes
+        function clearDominoes() {
+            dominoes.forEach(domino => {
+                world.removeBody(domino);
+            });
+            dominoes = [];
+            colorIndex = 0;
+        }
+
+        // Reset scene
+        function resetScene() {
+            clearDominoes();
+            // Create initial line
+            const startX = -8;
+            const y = canvas.height / 50 - 1 - DOMINO_HEIGHT / 2;
+            createDominoLine(startX, y, 15);
+        }
+
+        // Mouse interaction
+        let mouseBody = new p2.Body();
+        world.addBody(mouseBody);
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const pixelX = e.clientX - rect.left;
+            const pixelY = e.clientY - rect.top;
+            const worldCoords = pixelsToWorld([pixelX, pixelY]);
+
+            // Create domino at mouse position, slightly above ground
+            const groundY = canvas.height / 50 - 1;
+            createDomino(worldCoords[0], groundY - DOMINO_HEIGHT / 2);
+        });
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            switch(e.key.toLowerCase()) {
+                case ' ':
+                    pushFirstDomino();
+                    e.preventDefault();
+                    break;
+                case 'r':
+                    resetScene();
+                    break;
+                case 'c':
+                    clearDominoes();
+                    const startX = -10;
+                    const y = canvas.height / 50 - 1 - DOMINO_HEIGHT / 2;
+                    createDominoLine(startX, y, 20);
+                    break;
+            }
+        });
+
+        // Draw a box (domino)
+        function drawBox(body, width, height, color) {
+            ctx.save();
+
+            const pixelCoords = worldToPixels(body.position);
+            ctx.translate(pixelCoords[0], pixelCoords[1]);
+            ctx.rotate(body.angle);
+
+            // Draw shadow for depth
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(-width * 50 / 2 + 2, -height * 50 / 2 + 2, width * 50, height * 50);
+
+            // Draw domino
+            ctx.fillStyle = color;
+            ctx.fillRect(-width * 50 / 2, -height * 50 / 2, width * 50, height * 50);
+
+            // Draw border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-width * 50 / 2, -height * 50 / 2, width * 50, height * 50);
+
+            // Draw center dot for visual interest
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw ground
+        function drawGround() {
+            ctx.save();
+            const pixelCoords = worldToPixels(groundBody.position);
+
+            // Draw ground line
+            ctx.strokeStyle = '#34495e';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, pixelCoords[1]);
+            ctx.lineTo(canvas.width, pixelCoords[1]);
+            ctx.stroke();
+
+            // Draw ground fill
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, pixelCoords[1], canvas.width, canvas.height - pixelCoords[1]);
+
+            ctx.restore();
+        }
+
+        // Animation loop
+        let lastTime = Date.now();
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const currentTime = Date.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            // Step physics world
+            world.step(1 / 60, deltaTime, 10);
+
+            // Clear canvas
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw ground
+            drawGround();
+
+            // Draw all dominoes
+            dominoes.forEach(domino => {
+                drawBox(domino, DOMINO_WIDTH, DOMINO_HEIGHT, domino.displayColor);
+            });
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Initialize scene
+        resetScene();
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>
