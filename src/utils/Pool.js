@@ -59,3 +59,22 @@ Pool.prototype.release = function (object) {
 	this.objects.push(object);
 	return this;
 };
+
+/**
+ * Create a new object instance. This method should be overridden by subclasses.
+ * @method create
+ * @return {Object} The newly created object
+ */
+Pool.prototype.create = function () {
+	throw new Error('Pool.create() must be implemented by subclass');
+};
+
+/**
+ * Clean up an object before returning it to the pool. This method should be overridden by subclasses.
+ * @method destroy
+ * @param {Object} object The object to clean up
+ * @return {Pool} Self for chaining
+ */
+Pool.prototype.destroy = function (object) {
+	throw new Error('Pool.destroy() must be implemented by subclass');
+};
