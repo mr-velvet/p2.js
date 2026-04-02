@@ -120,8 +120,10 @@ Ray.prototype.update = function(){
 };
 
 /**
+ * Intersects the ray with an array of bodies and stores the results.
  * @method intersectBodies
- * @param {Array} bodies An array of Body objects.
+ * @param {RaycastResult} result The result object to store intersection data.
+ * @param {Array} bodies An array of Body objects to test for intersections.
  */
 Ray.prototype.intersectBodies = function (result, bodies) {
     for (var i = 0, l = bodies.length; !result.shouldStop(this) && i < l; i++) {
