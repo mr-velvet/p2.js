@@ -107,12 +107,10 @@ Convex.prototype.updateNormals = function(){
 };
 
 /**
- * Project a Convex onto a world-oriented axis
- * @method projectOntoAxis
- * @static
- * @param  {Array} offset
- * @param  {Array} localAxis
- * @param  {Array} result
+ * Project the Convex shape onto a local axis and get the interval [min, max].
+ * @method projectOntoLocalAxis
+ * @param  {Array} localAxis The axis to project onto (in local coordinates)
+ * @param  {Array} result A vec2 that will receive the projection interval [min, max]
  */
 Convex.prototype.projectOntoLocalAxis = function(localAxis, result){
     var max=null,
@@ -142,6 +140,14 @@ Convex.prototype.projectOntoLocalAxis = function(localAxis, result){
     vec2.set(result, min, max);
 };
 
+/**
+ * Project the Convex shape onto a world-oriented axis and get the interval [min, max].
+ * @method projectOntoWorldAxis
+ * @param  {Array} localAxis The axis to project onto (in local coordinates)
+ * @param  {Array} shapeOffset The world position of the shape
+ * @param  {Number} shapeAngle The world angle of the shape
+ * @param  {Array} result A vec2 that will receive the projection interval [min, max]
+ */
 Convex.prototype.projectOntoWorldAxis = function(localAxis, shapeOffset, shapeAngle, result){
     var worldAxis = tmpVec2;
 
