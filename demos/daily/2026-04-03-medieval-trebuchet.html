@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trebuchet Medieval - P2.js Physics Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #canvas {
+            display: block;
+            background: linear-gradient(to bottom, #87ceeb 0%, #e0f6ff 50%, #d4a574 100%);
+            cursor: crosshair;
+        }
+
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 300px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .info-panel h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #ffcc00;
+        }
+
+        .info-panel p {
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .controls {
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+
+        .controls strong {
+            color: #ffcc00;
+        }
+
+        .stats {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .stats div {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="info-panel">
+        <h1>🏰 Trebuchet Medieval</h1>
+        <p>
+            Uma catapulta medieval com física realista! Use o contrapeso pesado para lançar projéteis e destruir os alvos.
+        </p>
+        <div class="controls">
+            <strong>Controles:</strong><br>
+            • Clique e arraste o contrapeso para armar<br>
+            • Solte para disparar o projétil<br>
+            • Clique em qualquer lugar para criar novo alvo<br>
+            • Observe a física da alavanca em ação!
+        </div>
+    </div>
+
+    <div class="stats">
+        <div><strong>Alvos Destruídos:</strong> <span id="targets-hit">0</span></div>
+        <div><strong>Projéteis Lançados:</strong> <span id="shots-fired">0</span></div>
+        <div><strong>Velocidade Máxima:</strong> <span id="max-velocity">0</span> m/s</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Physics world
+        const world = new p2.World({
+            gravity: [0, 9.82]
+        });
+
+        // Scaling factor (pixels per meter)
+        const ppm = 50;
+
+        // Stats
+        let targetsHit = 0;
+        let shotsFired = 0;
+        let maxVelocity = 0;
+
+        // Mouse interaction
+        let mouseBody = null;
+        let mouseConstraint = null;
+        let isDragging = false;
+        let canShoot = true;
+
+        // Ground
+        const groundBody = new p2.Body({
+            mass: 0,
+            position: [canvas.width / ppm / 2, canvas.height / ppm - 1]
+        });
+        const groundShape = new p2.Plane();
+        groundBody.addShape(groundShape);
+        world.addBody(groundBody);
+
+        // Trebuchet structure
+        const baseWidth = 4;
+        const baseHeight = 0.5;
+        const baseBody = new p2.Body({
+            mass: 0,
+            position: [8, canvas.height / ppm - 2]
+        });
+        baseBody.addShape(new p2.Box({ width: baseWidth, height: baseHeight }));
+        world.addBody(baseBody);
+
+        // Main arm (lever)
+        const armLength = 6;
+        const armBody = new p2.Body({
+            mass: 5,
+            position: [8, canvas.height / ppm - 3.5],
+            angle: -0.3
+        });
+        armBody.addShape(new p2.Box({ width: armLength, height: 0.3 }));
+        world.addBody(armBody);
+
+        // Pivot point (connects arm to base)
+        const pivotConstraint = new p2.RevoluteConstraint(baseBody, armBody, {
+            worldPivot: [8, canvas.height / ppm - 2.25],
+            collideConnected: false
+        });
+        world.addConstraint(pivotConstraint);
+
+        // Counterweight (heavy mass on short end)
+        const counterweightBody = new p2.Body({
+            mass: 50,
+            position: [8 - armLength / 2 + 0.5, canvas.height / ppm - 4]
+        });
+        counterweightBody.addShape(new p2.Box({ width: 0.8, height: 0.8 }));
+        world.addBody(counterweightBody);
+
+        // Connect counterweight to arm
+        const counterweightConstraint = new p2.DistanceConstraint(armBody, counterweightBody, {
+            localAnchorA: [-armLength / 2 + 0.5, 0],
+            localAnchorB: [0, 0],
+            distance: 0.5
+        });
+        world.addConstraint(counterweightConstraint);
+
+        // Sling for projectile (on long end of arm)
+        let slingConstraint = null;
+        let projectile = null;
+
+        // Create initial projectile
+        function createProjectile() {
+            if (projectile) {
+                world.removeBody(projectile);
+            }
+
+            projectile = new p2.Body({
+                mass: 2,
+                position: [8 + armLength / 2 - 0.5, canvas.height / ppm - 5]
+            });
+            projectile.addShape(new p2.Circle({ radius: 0.3 }));
+            world.addBody(projectile);
+
+            // Attach projectile to arm with distance constraint (sling)
+            slingConstraint = new p2.DistanceConstraint(armBody, projectile, {
+                localAnchorA: [armLength / 2 - 0.5, 0],
+                localAnchorB: [0, 0],
+                distance: 1.5
+            });
+            world.addConstraint(slingConstraint);
+        }
+
+        createProjectile();
+
+        // Targets
+        const targets = [];
+
+        function createTarget(x, y) {
+            const target = new p2.Body({
+                mass: 3,
+                position: [x, y]
+            });
+            target.addShape(new p2.Box({ width: 0.8, height: 1.2 }));
+            target.isTarget = true;
+            world.addBody(target);
+            targets.push(target);
+            return target;
+        }
+
+        // Create initial targets
+        for (let i = 0; i < 5; i++) {
+            createTarget(20 + i * 1.5, canvas.height / ppm - 3 - Math.random() * 0.5);
+        }
+
+        // Create a tower of targets
+        for (let row = 0; row < 3; row++) {
+            for (let col = 0; col < 3 - row; col++) {
+                createTarget(30 + col * 1, canvas.height / ppm - 2.6 - row * 1.3);
+            }
+        }
+
+        // Mouse events
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) / ppm;
+            const mouseY = (e.clientY - rect.top) / ppm;
+
+            // Check if clicking on counterweight
+            const dx = mouseX - counterweightBody.position[0];
+            const dy = mouseY - counterweightBody.position[1];
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < 1 && canShoot) {
+                isDragging = true;
+                mouseBody = new p2.Body({ position: [mouseX, mouseY] });
+                world.addBody(mouseBody);
+                mouseConstraint = new p2.RevoluteConstraint(mouseBody, counterweightBody, {
+                    worldPivot: [mouseX, mouseY]
+                });
+                world.addConstraint(mouseConstraint);
+            } else if (!isDragging) {
+                // Create new target where clicked
+                createTarget(mouseX, mouseY);
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging && mouseBody) {
+                const rect = canvas.getBoundingClientRect();
+                mouseBody.position[0] = (e.clientX - rect.left) / ppm;
+                mouseBody.position[1] = (e.clientY - rect.top) / ppm;
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (isDragging) {
+                // Release the trebuchet - remove sling after a delay
+                isDragging = false;
+                canShoot = false;
+                shotsFired++;
+
+                if (mouseConstraint) {
+                    world.removeConstraint(mouseConstraint);
+                    mouseConstraint = null;
+                }
+                if (mouseBody) {
+                    world.removeBody(mouseBody);
+                    mouseBody = null;
+                }
+
+                // Release projectile after a short delay (when arm swings up)
+                setTimeout(() => {
+                    if (slingConstraint) {
+                        world.removeConstraint(slingConstraint);
+                        slingConstraint = null;
+                    }
+
+                    // Reset after projectile flies
+                    setTimeout(() => {
+                        createProjectile();
+                        canShoot = true;
+                    }, 3000);
+                }, 400);
+            }
+        });
+
+        // Collision detection for targets
+        world.on('beginContact', (evt) => {
+            const bodyA = evt.bodyA;
+            const bodyB = evt.bodyB;
+
+            if (projectile && (bodyA === projectile || bodyB === projectile)) {
+                const otherBody = bodyA === projectile ? bodyB : bodyA;
+
+                if (otherBody.isTarget) {
+                    // Calculate impact velocity
+                    const vx = projectile.velocity[0];
+                    const vy = projectile.velocity[1];
+                    const impactVel = Math.sqrt(vx * vx + vy * vy);
+
+                    // Strong impact destroys target
+                    if (impactVel > 8) {
+                        targetsHit++;
+                        const index = targets.indexOf(otherBody);
+                        if (index > -1) {
+                            targets.splice(index, 1);
+                        }
+                        world.removeBody(otherBody);
+                    }
+                }
+            }
+        });
+
+        // Rendering
+        function drawBody(body) {
+            ctx.save();
+            ctx.translate(body.position[0] * ppm, body.position[1] * ppm);
+            ctx.rotate(body.angle);
+
+            for (let i = 0; i < body.shapes.length; i++) {
+                const shape = body.shapes[i];
+
+                if (shape instanceof p2.Circle) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, shape.radius * ppm, 0, 2 * Math.PI);
+
+                    if (body === projectile) {
+                        ctx.fillStyle = '#2c3e50';
+                        ctx.fill();
+                        ctx.strokeStyle = '#34495e';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    } else {
+                        ctx.fillStyle = '#555';
+                        ctx.fill();
+                    }
+                } else if (shape instanceof p2.Box) {
+                    const w = shape.width * ppm;
+                    const h = shape.height * ppm;
+
+                    ctx.fillStyle = '#8b4513'; // Brown for structures
+                    if (body === baseBody) ctx.fillStyle = '#654321';
+                    if (body === counterweightBody) ctx.fillStyle = '#2c3e50'; // Dark for counterweight
+                    if (body.isTarget) ctx.fillStyle = '#e74c3c'; // Red for targets
+
+                    ctx.fillRect(-w / 2, -h / 2, w, h);
+
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-w / 2, -h / 2, w, h);
+                } else if (shape instanceof p2.Plane) {
+                    // Draw ground
+                    ctx.fillStyle = '#5d4e37';
+                    ctx.fillRect(-canvas.width, -10, canvas.width * 2, 20);
+                }
+            }
+
+            ctx.restore();
+        }
+
+        function drawConstraint(constraint) {
+            if (constraint instanceof p2.DistanceConstraint) {
+                const bodyA = constraint.bodyA;
+                const bodyB = constraint.bodyB;
+
+                const posA = [0, 0];
+                const posB = [0, 0];
+                bodyA.toWorldFrame(posA, constraint.localAnchorA);
+                bodyB.toWorldFrame(posB, constraint.localAnchorB);
+
+                ctx.beginPath();
+                ctx.moveTo(posA[0] * ppm, posA[1] * ppm);
+                ctx.lineTo(posB[0] * ppm, posB[1] * ppm);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+        }
+
+        // Animation loop
+        let lastTime = performance.now();
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            world.step(1 / 60, deltaTime, 10);
+
+            // Update max velocity
+            if (projectile) {
+                const vx = projectile.velocity[0];
+                const vy = projectile.velocity[1];
+                const vel = Math.sqrt(vx * vx + vy * vy);
+                maxVelocity = Math.max(maxVelocity, vel);
+            }
+
+            // Update stats
+            document.getElementById('targets-hit').textContent = targetsHit;
+            document.getElementById('shots-fired').textContent = shotsFired;
+            document.getElementById('max-velocity').textContent = maxVelocity.toFixed(1);
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw sky gradient (already in CSS background)
+
+            // Draw all bodies
+            for (let i = 0; i < world.bodies.length; i++) {
+                drawBody(world.bodies[i]);
+            }
+
+            // Draw constraints (ropes/slings)
+            for (let i = 0; i < world.constraints.length; i++) {
+                const constraint = world.constraints[i];
+                if (constraint === counterweightConstraint || constraint === slingConstraint) {
+                    drawConstraint(constraint);
+                }
+            }
+        }
+
+        animate(performance.now());
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
