@@ -116,8 +116,7 @@ Convex.prototype.projectOntoLocalAxis = function(localAxis, result){
     var max=null,
         min=null,
         v,
-        value,
-        localAxis = tmpVec1;
+        value;
 
     // Get projected position of all vertices
     for(var i=0; i<this.vertices.length; i++){
