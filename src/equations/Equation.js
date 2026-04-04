@@ -313,6 +313,18 @@ Equation.prototype = {
     }
 };
 
+/**
+ * Helper function to add constraint velocity contributions to a body's vlambda vector.
+ * Updates the velocity lambda vector by computing the contribution from Jacobian entries,
+ * inverse mass, and constraint multiplier delta.
+ * @private
+ * @param {Array} vlambda The velocity lambda vector to update [x, y]
+ * @param {Number} Gx The x-component of the Jacobian entry
+ * @param {Number} Gy The y-component of the Jacobian entry
+ * @param {Number} invMass The inverse mass of the body
+ * @param {Number} deltalambda The constraint multiplier delta
+ * @param {Array} massMultiplier Mass multiplier vector [x, y]
+ */
 function addToVLambda(vlambda, Gx, Gy, invMass, deltalambda, massMultiplier){
     vlambda[0] += Gx * invMass * deltalambda * massMultiplier[0];
     vlambda[1] += Gy * invMass * deltalambda * massMultiplier[1];
