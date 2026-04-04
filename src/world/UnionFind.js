@@ -46,6 +46,7 @@ UnionFind.prototype = {
      * Return the root (value) of the group in which p is.
      * @method find
      * @param {number} p
+     * @return {number} The root of the group containing p
      */
     find: function (p) {
         var id = this.id;
