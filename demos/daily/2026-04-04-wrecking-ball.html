@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bola de Demolição - p2.js Demo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p2.js/0.7.1/p2.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F6FF 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            cursor: grab;
+        }
+
+        canvas:active {
+            cursor: grabbing;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 300px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        #info h1 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+            color: #FFA500;
+        }
+
+        #info p {
+            margin: 5px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        #score {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 165, 0, 0.9);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="1200" height="700"></canvas>
+
+    <div id="info">
+        <h1>🏗️ Bola de Demolição</h1>
+        <p><strong>Clique e arraste</strong> a bola para balançá-la</p>
+        <p><strong>Solte</strong> para demolir a parede!</p>
+        <p>Demonstração de física 2D com transferência de momento e colisões realistas</p>
+    </div>
+
+    <div id="score">Blocos destruídos: <span id="count">0</span></div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // Physics world
+        const world = new p2.World({
+            gravity: [0, 15] // Gravidade para baixo
+        });
+
+        world.solver.iterations = 20; // Mais iterações para estabilidade
+        world.solver.tolerance = 0.01;
+
+        // Scaling factor (pixels per meter)
+        const ppm = 50;
+
+        // Mouse constraint
+        let mouseBody = null;
+        let mouseConstraint = null;
+        let isDragging = false;
+
+        // Score tracking
+        let blocksDestroyed = 0;
+        const destroyedBlocks = new Set();
+
+        // Create mouse body
+        mouseBody = new p2.Body();
+        world.addBody(mouseBody);
+
+        // === CREATE GROUND ===
+        const groundBody = new p2.Body({
+            mass: 0,
+            position: [w / ppm / 2, h / ppm - 0.5]
+        });
+        const groundShape = new p2.Plane();
+        groundBody.addShape(groundShape);
+        world.addBody(groundBody);
+
+        // === CREATE CRANE ARM (STATIC) ===
+        const craneX = w / ppm * 0.2;
+        const craneY = 2;
+        const craneBody = new p2.Body({
+            mass: 0,
+            position: [craneX, craneY]
+        });
+        const craneShape = new p2.Box({ width: 0.5, height: 0.5 });
+        craneBody.addShape(craneShape);
+        world.addBody(craneBody);
+
+        // === CREATE CHAIN (multiple segments) ===
+        const chainLength = 8;
+        const segmentSize = 0.3;
+        const chainBodies = [];
+
+        for (let i = 0; i < chainLength; i++) {
+            const chainSegment = new p2.Body({
+                mass: 0.5,
+                position: [craneX, craneY + 1 + i * segmentSize]
+            });
+            const chainShape = new p2.Box({ width: 0.2, height: segmentSize });
+            chainSegment.addShape(chainShape);
+            world.addBody(chainSegment);
+            chainBodies.push(chainSegment);
+
+            // Connect to previous segment or crane
+            const previousBody = i === 0 ? craneBody : chainBodies[i - 1];
+            const constraint = new p2.RevoluteConstraint(previousBody, chainSegment, {
+                localPivotA: [0, segmentSize / 2],
+                localPivotB: [0, -segmentSize / 2],
+                collideConnected: false
+            });
+            world.addConstraint(constraint);
+        }
+
+        // === CREATE WRECKING BALL ===
+        const ballRadius = 1.2;
+        const wreckingBall = new p2.Body({
+            mass: 50, // Bola pesada para máximo impacto
+            position: [craneX, craneY + 1 + chainLength * segmentSize + ballRadius],
+            damping: 0.1
+        });
+        const ballShape = new p2.Circle({ radius: ballRadius });
+        ballShape.material = new p2.Material();
+        wreckingBall.addShape(ballShape);
+        world.addBody(wreckingBall);
+
+        // Connect ball to last chain segment
+        const ballConstraint = new p2.RevoluteConstraint(
+            chainBodies[chainBodies.length - 1],
+            wreckingBall,
+            {
+                localPivotA: [0, segmentSize / 2],
+                localPivotB: [0, -ballRadius],
+                collideConnected: false
+            }
+        );
+        world.addConstraint(ballConstraint);
+
+        // === CREATE WALL OF BLOCKS ===
+        const wallX = w / ppm * 0.65;
+        const wallY = h / ppm - 2;
+        const blockWidth = 1.2;
+        const blockHeight = 0.6;
+        const rows = 10;
+        const cols = 6;
+
+        const wallBlocks = [];
+
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const x = wallX + col * blockWidth;
+                const y = wallY - row * blockHeight;
+
+                const block = new p2.Body({
+                    mass: 2,
+                    position: [x, y]
+                });
+
+                const blockShape = new p2.Box({
+                    width: blockWidth - 0.05,
+                    height: blockHeight - 0.05
+                });
+                blockShape.material = new p2.Material();
+                block.addShape(blockShape);
+
+                // Add color property for rendering
+                block.color = `hsl(${row * 36}, 70%, 50%)`;
+
+                world.addBody(block);
+                wallBlocks.push(block);
+            }
+        }
+
+        // === CONTACT MATERIAL (for realistic collisions) ===
+        const ballMaterial = ballShape.material;
+        const blockMaterial = wallBlocks[0].shapes[0].material;
+
+        const contactMaterial = new p2.ContactMaterial(ballMaterial, blockMaterial, {
+            restitution: 0.3,
+            friction: 0.5
+        });
+        world.addContactMaterial(contactMaterial);
+
+        // === MOUSE INTERACTION ===
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) / ppm;
+            const mouseY = (e.clientY - rect.top) / ppm;
+
+            const ballX = wreckingBall.position[0];
+            const ballY = wreckingBall.position[1];
+            const dx = mouseX - ballX;
+            const dy = mouseY - ballY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            // Check if clicking on the ball
+            if (dist < ballRadius) {
+                isDragging = true;
+                mouseBody.position[0] = mouseX;
+                mouseBody.position[1] = mouseY;
+
+                mouseConstraint = new p2.RevoluteConstraint(mouseBody, wreckingBall, {
+                    localPivotA: [0, 0],
+                    localPivotB: [dx, dy],
+                    maxForce: 5000
+                });
+                world.addConstraint(mouseConstraint);
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const rect = canvas.getBoundingClientRect();
+                mouseBody.position[0] = (e.clientX - rect.left) / ppm;
+                mouseBody.position[1] = (e.clientY - rect.top) / ppm;
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                world.removeConstraint(mouseConstraint);
+                mouseConstraint = null;
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            if (isDragging) {
+                isDragging = false;
+                world.removeConstraint(mouseConstraint);
+                mouseConstraint = null;
+            }
+        });
+
+        // === RENDERING ===
+        function drawBody(body) {
+            ctx.save();
+            ctx.translate(body.position[0] * ppm, body.position[1] * ppm);
+            ctx.rotate(body.angle);
+
+            for (let i = 0; i < body.shapes.length; i++) {
+                const shape = body.shapes[i];
+
+                if (shape instanceof p2.Circle) {
+                    // Draw wrecking ball
+                    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, shape.radius * ppm);
+                    gradient.addColorStop(0, '#555');
+                    gradient.addColorStop(0.7, '#222');
+                    gradient.addColorStop(1, '#000');
+
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, shape.radius * ppm, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Add shine effect
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.beginPath();
+                    ctx.arc(-shape.radius * ppm * 0.3, -shape.radius * ppm * 0.3,
+                            shape.radius * ppm * 0.4, 0, 2 * Math.PI);
+                    ctx.fill();
+
+                } else if (shape instanceof p2.Box) {
+                    const w = shape.width * ppm;
+                    const h = shape.height * ppm;
+
+                    if (body === craneBody) {
+                        // Draw crane
+                        ctx.fillStyle = '#8B4513';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.strokeStyle = '#654321';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                    } else if (chainBodies.includes(body)) {
+                        // Draw chain link
+                        ctx.fillStyle = '#444';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.strokeStyle = '#222';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                    } else {
+                        // Draw wall block with gradient
+                        const gradient = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+                        const baseColor = body.color || '#C4A484';
+                        gradient.addColorStop(0, baseColor);
+                        gradient.addColorStop(0.5, adjustBrightness(baseColor, 20));
+                        gradient.addColorStop(1, baseColor);
+
+                        ctx.fillStyle = gradient;
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+
+                        // Brick outline
+                        ctx.strokeStyle = adjustBrightness(baseColor, -30);
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+
+                        // Brick detail lines
+                        ctx.strokeStyle = adjustBrightness(baseColor, -20);
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(-w / 2 + 3, -h / 2 + 3);
+                        ctx.lineTo(w / 2 - 3, -h / 2 + 3);
+                        ctx.moveTo(-w / 2 + 3, h / 2 - 3);
+                        ctx.lineTo(w / 2 - 3, h / 2 - 3);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            ctx.restore();
+        }
+
+        // Helper function to adjust color brightness
+        function adjustBrightness(color, percent) {
+            const num = parseInt(color.replace(/^hsl\(|\)$/g, '').split(',')[2]);
+            const newNum = Math.max(0, Math.min(100, num + percent));
+            return color.replace(/\d+%\)/, newNum + '%)');
+        }
+
+        // === ANIMATION LOOP ===
+        let lastTime = performance.now();
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // Step the physics world
+            world.step(1 / 60, deltaTime, 10);
+
+            // Check for blocks that fell off or moved significantly
+            wallBlocks.forEach(block => {
+                const y = block.position[1];
+                const velocity = Math.sqrt(
+                    block.velocity[0] ** 2 + block.velocity[1] ** 2
+                );
+
+                // Mark as destroyed if it fell off or is moving fast
+                if ((y > h / ppm || velocity > 5) && !destroyedBlocks.has(block.id)) {
+                    destroyedBlocks.add(block.id);
+                    blocksDestroyed++;
+                    document.getElementById('count').textContent = blocksDestroyed;
+                }
+            });
+
+            // Clear canvas
+            ctx.fillStyle = 'rgba(135, 206, 235, 0.1)';
+            ctx.fillRect(0, 0, w, h);
+
+            // Draw ground
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(0, (h / ppm - 1) * ppm, w, ppm);
+
+            // Draw all bodies
+            for (let i = 0; i < world.bodies.length; i++) {
+                const body = world.bodies[i];
+                if (body !== mouseBody && body !== groundBody) {
+                    drawBody(body);
+                }
+            }
+
+            // Draw chain connection line for visual effect
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(craneBody.position[0] * ppm, craneBody.position[1] * ppm);
+            for (let i = 0; i < chainBodies.length; i++) {
+                ctx.lineTo(chainBodies[i].position[0] * ppm, chainBodies[i].position[1] * ppm);
+            }
+            ctx.lineTo(wreckingBall.position[0] * ppm, wreckingBall.position[1] * ppm);
+            ctx.stroke();
+        }
+
+        // Start animation
+        animate(performance.now());
+    </script>
+</body>
+</html>
